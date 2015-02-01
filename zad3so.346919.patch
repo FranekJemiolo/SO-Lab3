@@ -1,0 +1,183 @@
+From 428bb0c1475ddc777108d7f3b9d9f4be0bbff838 Mon Sep 17 00:00:00 2001
+From: Franciszek Jemiolo <f.jemiolo@student.uw.edu.pl>
+Date: Tue, 20 Jan 2015 00:36:23 +0000
+Subject: [PATCH] Added everything about rwsem implementation, but
+ unfortunately something doesn't work when exceeded
+ MAX_RWSEM count...
+
+---
+ build_rwsem.sh                  |    7 +++++++
+ include/minix/com.h             |   15 +++++++++++++++
+ include/minix/rwsem.h           |   21 +++++++++++++++++++++
+ include/unistd.h                |    9 +++++++++
+ lib/libc/sys-minix/Makefile.inc |    3 ++-
+ servers/ipc/Makefile            |    2 +-
+ servers/ipc/inc.h               |    9 +++++++++
+ servers/ipc/main.c              |    6 ++++++
+ 8 files changed, 70 insertions(+), 2 deletions(-)
+ create mode 100644 build_rwsem.sh
+ create mode 100644 include/minix/rwsem.h
+
+diff --git a/build_rwsem.sh b/build_rwsem.sh
+new file mode 100644
+index 0000000..fceb37a
+--- /dev/null
++++ b/build_rwsem.sh
+@@ -0,0 +1,7 @@
++#!bin/sh
++cd /usr/src/servers
++make && make install
++cd /usr/src/lib/libc
++make && make install
++cd
++reboot
+diff --git a/include/minix/com.h b/include/minix/com.h
+index 7d57e7b..94f0024 100644
+--- a/include/minix/com.h
++++ b/include/minix/com.h
+@@ -1128,6 +1128,21 @@
+ #	define SEMOP_OPS	m2_l1
+ #	define SEMOP_SIZE	m2_i2
+ 
++/* Rwsem */
++#define IPC_RWSEM_GET           (IPC_BASE + 8)
++#   define RWSEM_GET_KEY            m2_l1
++#   define RWSEM_GET_RETID          m2_i2
++#define IPC_RWSEM_READ_LOCK     (IPC_BASE + 9)
++#   define RWSEM_READ_LOCK_ID       m2_i1
++#define IPC_RWSEM_READ_UNLOCK   (IPC_BASE + 10)
++#   define RWSEM_READ_UNLOCK_ID     m2_i1
++#define IPC_RWSEM_WRITE_LOCK    (IPC_BASE + 11)
++#   define RWSEM_WRITE_LOCK_ID      m2_i1
++#define IPC_RWSEM_WRITE_UNLOCK  (IPC_BASE + 12)
++#   define RWSEM_WRITE_UNLOCK_ID    m2_i1
++#define IPC_RWSEM_DEL           (IPC_BASE + 13)
++#   define RWSEM_DEL_ID             m2_i1
++
+ /*===========================================================================*
+  *                Messages for Scheduling				     *
+  *===========================================================================*/
+diff --git a/include/minix/rwsem.h b/include/minix/rwsem.h
+new file mode 100644
+index 0000000..cd269d3
+--- /dev/null
++++ b/include/minix/rwsem.h
+@@ -0,0 +1,21 @@
++#ifndef _RWSEM_H_
++#define _RWSEM_H_
++#include <sys/types.h>
++
++// Header file for rwsem.c
++#define MAX_RWSEM 500
++
++int rwsemget (key_t key);
++
++int read_lock (int sem_id);
++int read_unlock (int sem_id);
++int write_lock (int sem_id);
++int write_unlock (int sem_id);
++
++int rwsemdel (int sem_id);
++
++
++
++
++
++#endif
+diff --git a/include/unistd.h b/include/unistd.h
+index 55a146b..e7d99e8 100644
+--- a/include/unistd.h
++++ b/include/unistd.h
+@@ -420,6 +420,15 @@ int	 syscall(int, ...);
+ quad_t	 __syscall(quad_t, ...);
+ int	 undelete(const char *);
+ 
++/* Rwsem functions prototypes */
++int rwsemget (key_t key);
++int read_lock (int sem_id);
++int read_unlock (int sem_id);
++int write_lock (int sem_id);
++int write_unlock (int sem_id);
++int rwsemdel (int sem_id);
++
++
+ #if 1 /*INET6*/
+ int	 rcmd_af(char **, int, const char *,
+ 	    const char *, const char *, int *, int);
+diff --git a/lib/libc/sys-minix/Makefile.inc b/lib/libc/sys-minix/Makefile.inc
+index 6f52097..592fa7e 100644
+--- a/lib/libc/sys-minix/Makefile.inc
++++ b/lib/libc/sys-minix/Makefile.inc
+@@ -16,7 +16,8 @@ SRCS+= 	accept.c access.c bind.c brk.c sbrk.c m_closefrom.c getsid.c \
+ 	vectorio.c shutdown.c sigaction.c sigpending.c sigreturn.c sigsuspend.c\
+ 	sigprocmask.c socket.c socketpair.c stat.c statvfs.c symlink.c \
+ 	sync.c syscall.c sysuname.c truncate.c umask.c unlink.c write.c \
+-	_exit.c _ucontext.c environ.c __getcwd.c vfork.c sizeup.c init.c
++	_exit.c _ucontext.c environ.c __getcwd.c vfork.c sizeup.c init.c \
++	rwsem.c
+ 
+ # Minix specific syscalls.
+ SRCS+= cprofile.c lseek64.c sprofile.c _mcontext.c
+diff --git a/servers/ipc/Makefile b/servers/ipc/Makefile
+index ccda5f1..c464099 100644
+--- a/servers/ipc/Makefile
++++ b/servers/ipc/Makefile
+@@ -1,6 +1,6 @@
+ # Makefile for IPC server
+ PROG=	ipc
+-SRCS=	main.c utility.c shm.c sem.c
++SRCS=	main.c utility.c shm.c sem.c rwsem.c
+ 
+ DPADD+=	${LIBSYS}
+ LDADD+=	-lsys
+diff --git a/servers/ipc/inc.h b/servers/ipc/inc.h
+index e3e1dc8..4a05c71 100644
+--- a/servers/ipc/inc.h
++++ b/servers/ipc/inc.h
+@@ -16,10 +16,12 @@
+ #include <sys/ipc.h>
+ #include <sys/shm.h>
+ #include <sys/sem.h>
++//#include <sys/rwsem.h>
+ #include <sys/mman.h>
+ #include <machine/vm.h>
+ #include <machine/vmparam.h>
+ #include <sys/vm.h>
++#include <minix/rwsem.h>
+ 
+ #include <time.h>
+ #include <stdio.h>
+@@ -41,6 +43,13 @@ int do_semop(message *);
+ int is_sem_nil(void);
+ int is_shm_nil(void);
+ void sem_process_vm_notify(void);
++int do_rwsem_get (message *);
++int do_rwsem_read_lock (message *);
++int do_rwsem_read_unlock (message *);
++int do_rwsem_write_lock (message *);
++int do_rwsem_write_unlock (message *);
++int do_rwsem_del (message *);
++
+ 
+ EXTERN int identifier;
+ EXTERN endpoint_t who_e;
+diff --git a/servers/ipc/main.c b/servers/ipc/main.c
+index de371e5..b240f53 100644
+--- a/servers/ipc/main.c
++++ b/servers/ipc/main.c
+@@ -17,6 +17,12 @@ static struct {
+ 	{ IPC_SEMGET,	do_semget,	0 },
+ 	{ IPC_SEMCTL,	do_semctl,	0 },
+ 	{ IPC_SEMOP,	do_semop,	1 },
++    { IPC_RWSEM_GET,            do_rwsem_get, 0 },
++	{ IPC_RWSEM_READ_LOCK,      do_rwsem_read_lock, 1 },
++	{ IPC_RWSEM_READ_UNLOCK,    do_rwsem_read_unlock, 0 },
++	{ IPC_RWSEM_WRITE_LOCK,     do_rwsem_write_lock, 1 },
++	{ IPC_RWSEM_WRITE_UNLOCK,   do_rwsem_write_unlock, 0 },
++	{ IPC_RWSEM_DEL,            do_rwsem_del, 1 },
+ };
+ 
+ #define SIZE(a) (sizeof(a)/sizeof(a[0]))
+-- 
+1.7.7
+
